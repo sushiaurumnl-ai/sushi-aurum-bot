@@ -3,3 +3,4 @@ SQLAlchemy
 aiofiles
 python-dotenv
 
+pytz
