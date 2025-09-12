@@ -3,7 +3,7 @@
 import os
 import json
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
 from telegram import (
     Update,
@@ -14,245 +14,200 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
-    ContextTypes,
     MessageHandler,
+    ContextTypes,
     filters,
 )
 
-# ====== ENV ======
+# ======= ENV =======
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "")
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "")  # строка ок
 TZ = os.getenv("TZ", "Europe/Amsterdam")
 MENU_FILE = os.getenv("MENU_FILE", "menu.json")
 
 if not BOT_TOKEN:
     raise RuntimeError("Set BOT_TOKEN env var")
 
-# ====== LOGGING ======
+# ======= LOGGING =======
 logging.basicConfig(
-    format="%(asctime)s — %(name)s — %(levelname)s — %(message)s",
+    format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 log = logging.getLogger("sushi-bot")
 
-# ====== MENU / DATA ======
-# Ожидается menu.json вида:
+# ======= MENU =======
+# ожидаемый формат menu.json:
 # {
 #   "categories": [
-#     {"id": "sets", "title_ru": "Сеты", "title_nl": "Sets"},
-#     {"id": "rolls", "title_ru": "Роллы", "title_nl": "Rollen"}
+#     {"id":"sets","title_ru":"Сеты","title_nl":"Sets"},
+#     {"id":"rolls","title_ru":"Роллы","title_nl":"Rollen"}
 #   ],
 #   "items": [
-#     {"id":"101","cat":"sets","title_ru":"Сет Самурай","title_nl":"Samurai Set","price":24.90},
-#     {"id":"201","cat":"rolls","title_ru":"Филадельфия","title_nl":"Philadelphia","price":8.90}
+#     {"id":"r1","cat":"rolls","title_ru":"Калифорния","title_nl":"California","price":8.5},
+#     ...
 #   ]
 # }
 with open(MENU_FILE, "r", encoding="utf-8") as f:
-    MENU = json.load(f)
+    MENU: Dict[str, Any] = json.load(f)
 
-CATEGORIES = {c["id"]: c for c in MENU.get("categories", [])}
-ITEMS: Dict[str, Dict[str, Any]] = {i["id"]: i for i in MENU.get("items", [])}
+CATEGORIES: List[Dict[str, Any]] = MENU.get("categories", [])
+ITEMS: List[Dict[str, Any]] = MENU.get("items", [])
 
-# ====== i18n ======
+# ======= i18n (минимальный) =======
 I18N = {
     "start": {
-        "ru": "Привет! Это магазин *Sushi Aurum*. Выберите раздел:",
-        "nl": "Hoi! Dit is *Sushi Aurum*. Kies een categorie:",
+        "ru": "Привет! Это магазин *Sushi Aurum*.\nВыберите раздел:",
+        "nl": "Hoi! Dit is *Sushi Aurum*.\nKies een categorie:",
     },
-    "browse": {"ru": "Меню", "nl": "Menu"},
+    "browse": {"ru": "📁 Меню", "nl": "📁 Menu"},
     "cart": {"ru": "🛒 Корзина", "nl": "🛒 Winkelmand"},
-    "back": {"ru": "⬅️ Назад", "nl": "⬅️ Terug"},
-    "choose_cat": {
-        "ru": "Выберите раздел:",
-        "nl": "Kies een categorie:",
-    },
-    "choose_item": {
-        "ru": "Выберите позицию:",
-        "nl": "Kies een item:",
-    },
-    "added": {"ru": "Добавлено в корзину.", "nl": "Toegevoegd aan mandje."},
-    "empty_cart": {"ru": "Корзина пуста.", "nl": "Je mandje is leeg."},
-    "cart_title": {"ru": "В вашей корзине:", "nl": "In je mandje:"},
-    "add": {"ru": "Добавить", "nl": "Toevoegen"},
-    "price": {"ru": "Цена", "nl": "Prijs"},
+    "back": {"ru": "◀️ Назад", "nl": "◀️ Terug"},
+    "empty_cart": {"ru": "🟦 Корзина пуста.", "nl": "🟦 Je mandje is leeg."},
+    "choose_cat": {"ru": "Выберите раздел:", "nl": "Kies een categorie:"},
+    "choose_item": {"ru": "Выберите позицию:", "nl": "Kies een artikel:"},
+    "added": {"ru": "✅ Добавлено в корзину.", "nl": "✅ Toegevoegd aan mandje."},
 }
 
-DEFAULT_LANG = "ru"  # можно переключить на "nl" при желании
-
-# ====== STATE (in-memory) ======
-# carts: user_id -> {item_id: qty}
+# ======= STATE =======
+# user_id -> {item_id: qty}
 CARTS: Dict[int, Dict[str, int]] = {}
 
 
-# ====== HELPERS ======
+# ======= helpers =======
 def lang_of_user(update: Update) -> str:
-    # простая логика — всегда ru. При желании можно читать язык из профиля.
-    return DEFAULT_LANG
+    # простое правило: если в PENDING нет данных, дефолт "ru"
+    return "ru"
 
+def t(key: str, lang: str) -> str:
+    return I18N.get(key, {}).get(lang, I18N.get(key, {}).get("ru", key))
 
-def money(x: float) -> str:
-    return f"{x:.2f}"
+def title_of(obj: Dict[str, Any], lang: str) -> str:
+    if lang == "nl":
+        return obj.get("title_nl") or obj.get("title_ru") or "—"
+    return obj.get("title_ru") or obj.get("title_nl") or "—"
 
-
-def main_kb(lang: str) -> InlineKeyboardMarkup:
-    # Две категории из menu.json + кнопка корзины
-    buttons = []
-    # Если в меню много категорий — покажем первые 2 рядом
-    row = []
-    for cat in MENU.get("categories", []):
-        row.append(InlineKeyboardButton(
-            text=cat.get(f"title_{lang}", cat.get("title_ru", "Menu")),
-            callback_data=f"browse:{cat['id']}",
-        ))
+def categories_kb(lang: str) -> InlineKeyboardMarkup:
+    rows = []
+    row: List[InlineKeyboardButton] = []
+    for cat in CATEGORIES:
+        row.append(
+            InlineKeyboardButton(
+                title_of(cat, lang), callback_data=f"cat:{cat['id']}"
+            )
+        )
         if len(row) == 2:
-            buttons.append(row)
+            rows.append(row)
             row = []
     if row:
-        buttons.append(row)
-
-    # Корзина отдельной строкой
-    buttons.append([
-        InlineKeyboardButton(I18N["cart"][lang], callback_data="cart")
-    ])
-    return InlineKeyboardMarkup(buttons)
-
+        rows.append(row)
+    # низ — кнопка корзины
+    rows.append([InlineKeyboardButton(t("cart", lang), callback_data="cart")])
+    return InlineKeyboardMarkup(rows)
 
 def items_kb(cat_id: str, lang: str) -> InlineKeyboardMarkup:
-    buttons = []
-    for it in (x for x in ITEMS.values() if x.get("cat") == cat_id):
-        title = it.get(f"title_{lang}", it.get("title_ru", "Item"))
-        buttons.append([InlineKeyboardButton(title, callback_data=f"item:{it['id']}")])
-    buttons.append([InlineKeyboardButton(I18N["back"][lang], callback_data="home")])
-    return InlineKeyboardMarkup(buttons)
+    rows = []
+    for it in [x for x in ITEMS if x.get("cat") == cat_id]:
+        title = f"{title_of(it, lang)} — {it.get('price', 0):.2f}"
+        rows.append(
+            [InlineKeyboardButton(title, callback_data=f"add:{it['id']}:{cat_id}")]
+        )
+    rows.append([InlineKeyboardButton(t("back", lang), callback_data="browse")])
+    rows.append([InlineKeyboardButton(t("cart", lang), callback_data="cart")])
+    return InlineKeyboardMarkup(rows)
 
+def cart_text(uid: int, lang: str) -> str:
+    cart = CARTS.get(uid, {})
+    if not cart:
+        return t("empty_cart", lang)
+    lines = []
+    total = 0.0
+    for item_id, qty in cart.items():
+        it = next((x for x in ITEMS if x["id"] == item_id), None)
+        if not it:
+            continue
+        price = float(it.get("price", 0.0))
+        total += price * qty
+        lines.append(f"• {title_of(it, lang)} × {qty} = {price*qty:.2f}")
+    lines.append(f"\nИтого: {total:.2f}" if lang == "ru" else f"\nTotaal: {total:.2f}")
+    return "\n".join(lines)
 
-def item_kb(item_id: str, lang: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(I18N["add"][lang], callback_data=f"add:{item_id}")],
-        [InlineKeyboardButton(I18N["back"][lang], callback_data=f"browse:{ITEMS[item_id]['cat']}")],
-    ])
-
-
-# ====== HANDLERS ======
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    lang = lang_of_user(update)
-    await update.message.reply_text(
-        I18N["start"][lang],
-        reply_markup=main_kb(lang),
-        parse_mode="Markdown",
+def cart_kb(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton(t("back", lang), callback_data="browse")],
+        ]
     )
 
 
-async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ======= handlers =======
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     lang = lang_of_user(update)
-    query = update.callback_query
-    await query.answer()
+    await update.message.reply_text(
+        t("start", lang), reply_markup=categories_kb(lang), parse_mode="Markdown"
+    )
 
+async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    assert query is not None
+    await query.answer()
+    lang = lang_of_user(update)
     data = query.data or ""
 
-    # Домой (главное меню)
-    if data == "home":
+    # показать категории
+    if data == "browse":
         await query.edit_message_text(
-            I18N["choose_cat"][lang],
-            reply_markup=main_kb(lang),
+            t("choose_cat", lang), reply_markup=categories_kb(lang)
         )
         return
 
-    # Открыть корзину
+    # корзина
     if data == "cart":
         uid = update.effective_user.id
-        cart = CARTS.get(uid, {})
-        if not cart:
-            await query.edit_message_text(I18N["empty_cart"][lang], reply_markup=main_kb(lang))
-            return
-        lines = [I18N["cart_title"][lang], ""]
-        total = 0.0
-        for item_id, qty in cart.items():
-            it = ITEMS.get(item_id)
-            if not it:
-                continue
-            price = float(it.get("price", 0))
-            subtotal = price * qty
-            total += subtotal
-            title = it.get(f"title_{lang}", it.get("title_ru", "Item"))
-            lines.append(f"• {title} × {qty} — € {money(subtotal)}")
-        lines.append("")
-        lines.append(f"Итого: € {money(total)}")
-        await query.edit_message_text("\n".join(lines), reply_markup=main_kb(lang))
+        await query.edit_message_text(
+            cart_text(uid, lang), reply_markup=cart_kb(lang)
+        )
         return
 
-    # Просмотр категории
-    if data.startswith("browse:"):
+    # открыть категорию
+    if data.startswith("cat:"):
         cat_id = data.split(":", 1)[1]
-        cat = CATEGORIES.get(cat_id)
-        if not cat:
-            await query.edit_message_text("Категория не найдена.", reply_markup=main_kb(lang))
-            return
         await query.edit_message_text(
-            I18N["choose_item"][lang],
-            reply_markup=items_kb(cat_id, lang),
+            t("choose_item", lang), reply_markup=items_kb(cat_id, lang)
         )
         return
 
-    # Просмотр конкретного товара
-    if data.startswith("item:"):
-        item_id = data.split(":", 1)[1]
-        it = ITEMS.get(item_id)
-        if not it:
-            await query.edit_message_text("Позиция не найдена.", reply_markup=main_kb(lang))
-            return
-        title = it.get(f"title_{lang}", it.get("title_ru", "Item"))
-        price = it.get("price", 0)
-        text = f"*{title}*\n{I18N['price'][lang]}: € {money(float(price))}"
-        await query.edit_message_text(
-            text,
-            reply_markup=item_kb(item_id, lang),
-            parse_mode="Markdown",
-        )
-        return
-
-    # Добавление в корзину
+    # добавить товар
     if data.startswith("add:"):
-        item_id = data.split(":", 1)[1]
+        # формат add:<item_id>:<cat_id>
+        parts = data.split(":")
+        if len(parts) >= 3:
+            item_id, cat_id = parts[1], parts[2]
+        else:
+            item_id, cat_id = parts[1], ""
         uid = update.effective_user.id
         CARTS.setdefault(uid, {})
         CARTS[uid][item_id] = CARTS[uid].get(item_id, 0) + 1
-        await query.answer(I18N["added"][lang], show_alert=False)
+        # показать подтверждение и снова список позиций
+        await query.edit_message_text(
+            t("added", lang), reply_markup=items_kb(cat_id, lang)
+        )
+        return
 
-        # После добавления покажем карточку товара снова
-        it = ITEMS.get(item_id)
-        if it:
-            title = it.get(f"title_{lang}", it.get("title_ru", "Item"))
-            price = it.get("price", 0)
-            text = f"*{title}*\n{I18N['price'][lang]}: € {money(float(price))}"
-            await query.edit_message_text(
-                text,
-                reply_markup=item_kb(item_id, lang),
-                parse_mode="Markdown",
-            )
-        else:
-            await query.edit_message_text(I18N["choose_cat"][lang], reply_markup=main_kb(lang))
-
-
-# На всякий случай — ответ «/menu» тем же, что и /start
-async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await start(update, context)
-
-
-async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # тихо игнорим любые тексты: показываем меню
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # на любой текст показываем главное меню
     lang = lang_of_user(update)
-    await update.message.reply_text(I18N["start"][lang], reply_markup=main_kb(lang), parse_mode="Markdown")
+    await update.message.reply_text(
+        t("start", lang), reply_markup=categories_kb(lang), parse_mode="Markdown"
+    )
 
 
-def main():
+# ======= MAIN =======
+def main() -> None:
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("menu", menu_cmd))
     app.add_handler(CallbackQueryHandler(on_callback))
-    # любое сообщение — показать меню
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     log.info("Bot started")
     app.run_polling()
