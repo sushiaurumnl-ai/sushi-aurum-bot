@@ -1,6 +1,5 @@
 python-telegram-bot==20.6
+pytz
+python-dotenv
 SQLAlchemy
 aiofiles
-python-dotenv
-
-pytz
