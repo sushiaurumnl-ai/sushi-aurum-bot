@@ -1,68 +1,22 @@
 {
-  "categories": [
+  "Суши": [
     {
-      "id": "rolls",
-      "name_ru": "Роллы",
-      "name_nl": "Rollen",
-      "items": [
-        {
-          "id": "california",
-          "name_ru": "Калифорния",
-          "name_nl": "California",
-          "price": 8.5,
-          "desc_ru": "Краб, авокадо, огурец",
-          "desc_nl": "Krab, avocado, komkommer"
-        },
-        {
-          "id": "philadelphia",
-          "name_ru": "Филадельфия",
-          "name_nl": "Philadelphia",
-          "price": 10.5,
-          "desc_ru": "Лосось, сыр, огурец",
-          "desc_nl": "Zalm, roomkaas, komkommer"
-        }
-      ]
+      "name": "Филадельфия",
+      "price": 8.5
     },
     {
-      "id": "sets",
-      "name_ru": "Сеты",
-      "name_nl": "Sets",
-      "items": [
-        {
-          "id": "set_small",
-          "name_ru": "Сет Малый (4 ролла)",
-          "name_nl": "Klein Set (4 rollen)",
-          "price": 34.0,
-          "desc_ru": "На 2 персоны",
-          "desc_nl": "Voor 2 personen"
-        }
-      ]
-    },
-    {
-      "id": "drinks",
-      "name_ru": "Напитки",
-      "name_nl": "Drankjes",
-      "items": [
-        {
-          "id": "cola",
-          "name_ru": "Coca‑Cola 330ml",
-          "name_nl": "Coca‑Cola 330ml",
-          "price": 2.5,
-          "desc_ru": "",
-          "desc_nl": ""
-        }
-      ]
+      "name": "Калифорния",
+      "price": 7.5
     }
   ],
-  "delivery": {
-    "city": "Eindhoven",
-    "min_order": 20.0,
-    "delivery_fee": 3.5,
-    "free_from": 60.0,
-    "estimate_minutes": 60
-  },
-  "contacts": {
-    "phone": "+31 6 12 34 56 78",
-    "instagram": "@sushi_aurum"
-  }
+  "Напитки": [
+    {
+      "name": "Кола",
+      "price": 2.0
+    },
+    {
+      "name": "Сок апельсиновый",
+      "price": 2.5
+    }
+  ]
 }
