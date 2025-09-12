@@ -8,6 +8,7 @@
     { "id": "set2", "cat_id": "sets",  "title_ru": "Сет Премиум", "title_nl": "Premium set", "price": 29.90 },
 
     { "id": "phil", "cat_id": "rolls", "title_ru": "Филадельфия", "title_nl": "Philadelphia", "price": 8.50 },
-    { "id": "cal",  "cat_id": "rolls", "title_ru": "Калифорния",  "title_nl": "California",   "price": 7.50 }
+    { "id": "cal",  "cat_id": "rolls", "title_ru": "Калифорния",  "title_nl": "California",   "price": 7.50 },
+    { "id": "temp", "cat_id": "rolls", "title_ru": "Темпура ролл","title_nl": "Tempura roll", "price": 9.90 }
   ]
 }
